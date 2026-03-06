@@ -43,6 +43,10 @@
 * [Про сборку мусора](https://learn.microsoft.com/en-us/dotnet/standard/garbage-collection/)
 * [dotnet diagnostic tutorials от Microsoft](https://learn.microsoft.com/en-us/dotnet/core/diagnostics/debug-memory-leak)
 
+Презентации:
+* [Отладка](https://docs.google.com/presentation/d/1X8A1Ly0PuNBIPXOoqkG6dVk8mt4tdoYUeZJTzXYoUmw/edit?usp=sharing)
+* [Оптимизация](https://docs.google.com/presentation/d/1kZEkRFLmUI9NYepbqTIT0FV8dGnt_96EsTgdp85hi1Y/edit?usp=sharing)
+
 WinDbg:
 * [WinDbg commands](https://learn.microsoft.com/en-us/windows-hardware/drivers/debugger/commands)
 * [sos commands](http://www.windbg.xyz/windbg/article/10-SOS-Extension-Commands)
