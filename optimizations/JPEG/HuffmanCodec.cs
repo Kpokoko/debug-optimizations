@@ -1,4 +1,5 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -40,46 +41,48 @@ public class BitsWithLength
 
 class BitsBuffer
 {
-	private List<byte> buffer = new List<byte>();
-	private BitsWithLength unfinishedBits = new BitsWithLength();
+	private byte[] buffer;
+	private BitsWithLength unfinishedBits;
+	private int i;
+
+	public BitsBuffer(int bits)
+	{
+		buffer = new byte[bits];
+		i = 0;
+		unfinishedBits = new BitsWithLength();
+	}
 
 	public void Add(BitsWithLength bitsWithLength)
 	{
-		var bitsCount = bitsWithLength.BitsCount;
-		var bits = bitsWithLength.Bits;
-
-		int neededBits = 8 - unfinishedBits.BitsCount;
-		while (bitsCount >= neededBits)
+		var totalBits = bitsWithLength.BitsCount + unfinishedBits.BitsCount;
+		var combined = (unfinishedBits.Bits <<  bitsWithLength.BitsCount) | bitsWithLength.Bits;
+		
+		while (totalBits >= 8)
 		{
-			bitsCount -= neededBits;
-			buffer.Add((byte)((unfinishedBits.Bits << neededBits) + (bits >> bitsCount)));
-
-			bits = bits & ((1 << bitsCount) - 1);
-
-			unfinishedBits.Bits = 0;
-			unfinishedBits.BitsCount = 0;
-
-			neededBits = 8;
+			totalBits -= 8;
+			buffer[i++] = (byte)(combined >> totalBits);
+			combined &= (1 << totalBits) - 1;
 		}
 
-		unfinishedBits.BitsCount += bitsCount;
-		unfinishedBits.Bits = (unfinishedBits.Bits << bitsCount) + bits;
+		unfinishedBits.BitsCount = totalBits;
+		unfinishedBits.Bits = combined;
 	}
 
 	public byte[] ToArray(out long bitsCount)
 	{
-		bitsCount = buffer.Count * 8L + unfinishedBits.BitsCount;
-		var result = new byte[bitsCount / 8 + (bitsCount % 8 > 0 ? 1 : 0)];
-		buffer.CopyTo(result);
+		bitsCount = i * 8L + unfinishedBits.BitsCount;
+		var byteCount = (bitsCount + 7) / 8;
+		var result = new byte[byteCount];
+		Array.Copy(buffer, 0, result, 0, i);
 		if (unfinishedBits.BitsCount > 0)
-			result[buffer.Count] = (byte)(unfinishedBits.Bits << (8 - unfinishedBits.BitsCount));
+			result[i] = (byte)(unfinishedBits.Bits << (8 - unfinishedBits.BitsCount));
 		return result;
 	}
 }
 
 class HuffmanCodec
 {
-	public static byte[] Encode(IEnumerable<byte> data, out Dictionary<BitsWithLength, byte> decodeTable,
+	public static byte[] Encode(List<byte> data, out Dictionary<BitsWithLength, byte> decodeTable,
 		out long bitsCount)
 	{
 		var frequences = CalcFrequences(data);
@@ -89,7 +92,7 @@ class HuffmanCodec
 		var encodeTable = new BitsWithLength[byte.MaxValue + 1];
 		FillEncodeTable(root, encodeTable);
 
-		var bitsBuffer = new BitsBuffer();
+		var bitsBuffer = new BitsBuffer(data.Count());
 		foreach (var b in data)
 			bitsBuffer.Add(encodeTable[b]);
 
@@ -183,10 +186,11 @@ class HuffmanCodec
 		return queue;
 	}
 
-	private static int[] CalcFrequences(IEnumerable<byte> data)
+	private static int[] CalcFrequences(List<byte> data)
 	{
 		var result = new int[byte.MaxValue + 1];
-		Parallel.ForEach(data, b => Interlocked.Increment(ref result[b]));
+		for (var i = 0; i < data.Count; ++i)
+			++result[data[i]];
 		return result;
 	}
 }

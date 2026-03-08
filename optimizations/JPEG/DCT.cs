@@ -18,7 +18,8 @@ public class DCT
 		var width = input.GetLength(1);
 		var temp = new double[width, height];
 		var coeffs = new double[width, height];
-		PrepareCos(width, height);
+		if (_precalcCosX is null || _precalcCosY is null)
+			PrepareCos(width, height);
 
 		MathEx.LoopByTwoVariables(
 			0, width,
@@ -51,7 +52,8 @@ public class DCT
 	{
 		var height = coeffs.GetLength(0);
 		var width = coeffs.GetLength(1);
-		PrepareCos(width, height);
+		if (_precalcCosX is null || _precalcCosY is null)
+			PrepareCos(width, height);
 		
 		for (var x = 0; x < coeffs.GetLength(1); ++x)
 		{
@@ -60,9 +62,9 @@ public class DCT
 				var sum = 0d;
 				for (var u = 0; u < width; ++u)
 				{
-					var factorX = _precalcCosX[x * width + u];
+					var factorX = _precalcCosX![x * width + u];
 					for (var v = 0; v < height; ++v)
-						sum += coeffs[u, v] * factorX * _precalcCosY[y * height + v] * Alpha(v);
+						sum += coeffs[u, v] * factorX * _precalcCosY![y * height + v] * Alpha(v);
 					sum *= Alpha(u);
 				}
 
@@ -105,13 +107,15 @@ public class DCT
 	[MethodImpl(MethodImplOptions.AggressiveInlining)]
 	private static double Alpha(int u) => u == 0 ? AlphaValue : 1;
 
+	[MethodImpl(MethodImplOptions.AggressiveInlining)]
 	private static double Beta(int height, int width)
 	{
-		if (!BetaStorage.TryGetValue((height, width), out var beta))
-		{
-			beta = 1d / width + 1d / height;
-			BetaStorage[(height, width)] = beta;
-		}
-		return beta;
+		// if (!BetaStorage.TryGetValue((height, width), out var beta))
+		// {
+		// 	beta = 1d / width + 1d / height;
+		// 	BetaStorage[(height, width)] = beta;
+		// }
+		// return beta;
+		return 0.25;
 	}
 }
