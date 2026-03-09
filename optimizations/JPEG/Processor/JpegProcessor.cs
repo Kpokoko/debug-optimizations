@@ -18,37 +18,82 @@ public class JpegProcessor : IJpegProcessor
 	{
 		using var fileStream = File.OpenRead(imagePath);
 		using var bmp = (Bitmap)Image.FromStream(fileStream, false, false);
-		var imageMatrix = (Matrix)bmp;
+		var y = new double[bmp.Height, bmp.Width];
+		var cb =  new double[bmp.Height, bmp.Width];
+		var cr = new double[bmp.Height, bmp.Width];
+		PreparePixelsInfo(y, cb, cr, bmp);
 		//Console.WriteLine($"{bmp.Width}x{bmp.Height} - {fileStream.Length / (1024.0 * 1024):F2} MB");
-		var compressionResult = Compress(imageMatrix, CompressionQuality);
+		var compressionResult = Compress(y, cb, cr, bmp.Width, bmp.Height, CompressionQuality);
 		compressionResult.Save(compressedImagePath);
+	}
+
+	private unsafe void PreparePixelsInfo(double[,] y, double[,] cb, double[,] cr, Bitmap bmp)
+	{
+		var height = bmp.Height - bmp.Height % 8;
+		var width = bmp.Width - bmp.Width % 8;
+		
+		var rect = new Rectangle(0, 0, width, height);
+		var bmpData = bmp.LockBits(rect, ImageLockMode.ReadOnly, bmp.PixelFormat);
+		var pixelFormat = bmp.PixelFormat;
+		var pixelSize = pixelFormat is System.Drawing.Imaging.PixelFormat.Format24bppRgb ? 3 : 
+				pixelFormat is System.Drawing.Imaging.PixelFormat.Format32bppArgb ? 4 : 
+				pixelFormat is System.Drawing.Imaging.PixelFormat.Format32bppRgb ? 4 :
+					throw new NotSupportedException("Unsupported pixel format");
+
+		for (var j = 0; j < height; ++j)
+		{
+			var row = (byte*)bmpData.Scan0 + j * bmpData.Stride;
+			for (var i = 0; i < width; i++)
+			{
+				var pixel = row + i * pixelSize;
+				var b = pixel[0];
+				var g = pixel[1];
+				var r = pixel[2];
+				y[j, i] = 16.0 + (65.738 * r + 129.057 * g + 24.064 * b) / 256.0;
+				cb[j, i] = 128.0 + (-37.945 * r - 74.494 * g + 112.439 * b) / 256.0;
+				cr[j, i] = 128.0 + (112.439 * r - 94.154 * g - 18.285 * b) / 256.0;
+			}
+		}
+		
+		bmp.UnlockBits(bmpData);
 	}
 
 	public void Uncompress(string compressedImagePath, string uncompressedImagePath)
 	{
 		var compressedImage = CompressedImage.Load(compressedImagePath);
-		var uncompressedImage = Uncompress(compressedImage);
-		var resultBmp = (Bitmap)uncompressedImage;
+		var resultBmp = Uncompress(compressedImage);
 		resultBmp.Save(uncompressedImagePath, ImageFormat.Bmp);
 	}
 
-	private static CompressedImage Compress(Matrix matrix, int quality = 50)
+	private static CompressedImage Compress(double[,] yChannel, double[,] cb, double[,] cr,
+		int width, int height, int quality = 50)
 	{
 		var allQuantizedBytes = new List<byte>();
 
-		for (var y = 0; y < matrix.Height; y += DCTSize)
+		for (var y = 0; y < height; y += DCTSize)
 		{
-			for (var x = 0; x < matrix.Width; x += DCTSize)
+			for (var x = 0; x < width; x += DCTSize)
 			{
-				foreach (var selector in new Func<Pixel, double>[] { p => p.Y, p => p.Cb, p => p.Cr })
-				{
-					var subMatrix = GetSubMatrix(matrix, y, DCTSize, x, DCTSize, selector);
-					ShiftMatrixValues(subMatrix, -128);
-					var channelFreqs = DCT.DCT2D(subMatrix);
-					var quantizedFreqs = Quantize(channelFreqs, quality);
-					var quantizedBytes = ZigZagScan(quantizedFreqs);
-					allQuantizedBytes.AddRange(quantizedBytes);
-				}
+				var subMatrix = GetSubMatrix(yChannel, y, DCTSize, x, DCTSize);
+				ShiftMatrixValues(subMatrix, -128);
+				var channelFreqs = DCT.DCT2D(subMatrix);
+				var quantizedFreqs = Quantize(channelFreqs, quality);
+				var quantizedBytes = ZigZagScan(quantizedFreqs);
+				allQuantizedBytes.AddRange(quantizedBytes);
+				
+				subMatrix = GetSubMatrix(cb, y, DCTSize, x, DCTSize);
+				ShiftMatrixValues(subMatrix, -128);
+				channelFreqs = DCT.DCT2D(subMatrix);
+				quantizedFreqs = Quantize(channelFreqs, quality);
+				quantizedBytes = ZigZagScan(quantizedFreqs);
+				allQuantizedBytes.AddRange(quantizedBytes);
+				
+				subMatrix = GetSubMatrix(cr, y, DCTSize, x, DCTSize);
+				ShiftMatrixValues(subMatrix, -128);
+				channelFreqs = DCT.DCT2D(subMatrix);
+				quantizedFreqs = Quantize(channelFreqs, quality);
+				quantizedBytes = ZigZagScan(quantizedFreqs);
+				allQuantizedBytes.AddRange(quantizedBytes);
 			}
 		}
 
@@ -59,13 +104,13 @@ public class JpegProcessor : IJpegProcessor
 		return new CompressedImage
 		{
 			Quality = quality, CompressedBytes = compressedBytes, BitsCount = bitsCount, DecodeTable = decodeTable,
-			Height = matrix.Height, Width = matrix.Width
+			Height = height, Width = width
 		};
 	}
 
-	private static Matrix Uncompress(CompressedImage image)
+	private static Bitmap Uncompress(CompressedImage image)
 	{
-		var result = new Matrix(image.Height, image.Width);
+		var result = new Bitmap(image.Width, image.Height);
 		using (var allQuantizedBytes =
 		       new MemoryStream(HuffmanCodec.Decode(image.CompressedBytes, image.DecodeTable, image.BitsCount)))
 		{
@@ -86,7 +131,7 @@ public class JpegProcessor : IJpegProcessor
 						ShiftMatrixValues(channel, 128);
 					}
 
-					SetPixels(result, _y, cb, cr, PixelFormat.YCbCr, y, x);
+					SetPixels(result, _y, cb, cr, y, x);
 				}
 			}
 		}
@@ -104,24 +149,35 @@ public class JpegProcessor : IJpegProcessor
 			subMatrix[y, x] = subMatrix[y, x] + shiftValue;
 	}
 
-	private static void SetPixels(Matrix matrix, double[,] a, double[,] b, double[,] c, PixelFormat format,
+	private static void SetPixels(Bitmap bmp, double[,] yChannel, double[,] cbChannel, double[,] crChannel,
 		int yOffset, int xOffset)
 	{
-		var height = a.GetLength(0);
-		var width = a.GetLength(1);
+		var height = yChannel.GetLength(0);
+		var width = yChannel.GetLength(1);
 
 		for (var y = 0; y < height; y++)
-		for (var x = 0; x < width; x++)
-			matrix.Pixels[yOffset + y, xOffset + x] = new Pixel(a[y, x], b[y, x], c[y, x], format);
+		{
+			for (var x = 0; x < width; x++)
+			{
+				double _y = yChannel[y, x];
+				double cb = cbChannel[y, x];
+				double cr = crChannel[y, x];
+
+				var rByte = (byte)Math.Clamp((298.082 * _y + 408.583 * cr) / 256.0 - 222.921, 0, 255);
+				var gByte = (byte)Math.Clamp((298.082 * _y - 100.291 * cb - 208.120 * cr) / 256.0 + 135.576, 0, 255);
+				var bByte = (byte)Math.Clamp((298.082 * _y + 516.412 * cb) / 256.0 - 276.836, 0, 255);
+
+				bmp.SetPixel(xOffset + x, yOffset + y, Color.FromArgb(rByte, gByte, bByte));
+			}
+		}
 	}
 
-	private static double[,] GetSubMatrix(Matrix matrix, int yOffset, int yLength, int xOffset, int xLength,
-		Func<Pixel, double> componentSelector)
+	private static double[,] GetSubMatrix(double[,] channel, int yOffset, int yLength, int xOffset, int xLength)
 	{
 		var result = new double[yLength, xLength];
 		for (var j = 0; j < yLength; j++)
 		for (var i = 0; i < xLength; i++)
-			result[j, i] = componentSelector(matrix.Pixels[yOffset + j, xOffset + i]);
+			result[j, i] = channel[yOffset + j, xOffset + i];
 		return result;
 	}
 
