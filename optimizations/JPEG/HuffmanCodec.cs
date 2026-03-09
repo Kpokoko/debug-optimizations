@@ -15,67 +15,67 @@ class HuffmanNode
 	public HuffmanNode Right { get; set; }
 }
 
-public class BitsWithLength
+public struct BitsWithLength : IEquatable<BitsWithLength>
 {
-	public int Bits { get; set; }
-	public int BitsCount { get; set; }
+	public int Bits;
+	public int BitsCount;
 
-	public class Comparer : IEqualityComparer<BitsWithLength>
+	public bool Equals(BitsWithLength other)
 	{
-		public bool Equals(BitsWithLength x, BitsWithLength y)
-		{
-			if (x == y) return true;
-			if (x == null || y == null)
-				return false;
-			return x.BitsCount == y.BitsCount && x.Bits == y.Bits;
-		}
+		return Bits == other.Bits && BitsCount == other.BitsCount;
+	}
 
-		public int GetHashCode(BitsWithLength obj)
-		{
-			if (obj == null)
-				return 0;
-			return ((397 * obj.Bits) << 5) ^ (17 * obj.BitsCount);
-		}
+	public override bool Equals(object obj)
+	{
+		return obj is BitsWithLength other && Equals(other);
+	}
+
+	public override int GetHashCode()
+	{
+		return HashCode.Combine(Bits, BitsCount);
 	}
 }
 
 class BitsBuffer
 {
-	private byte[] buffer;
-	private BitsWithLength unfinishedBits;
-	private int i;
+	private readonly byte[] _buffer;
+	private int _position;
+	private int _pendingBits;
+	private int _pendingCount;
 
-	public BitsBuffer(int bits)
+	public BitsBuffer(int bytes)
 	{
-		buffer = new byte[bits];
-		i = 0;
-		unfinishedBits = new BitsWithLength();
+		_buffer = new byte[bytes];
+		_position = 0;
+		_pendingBits = 0;
+		_pendingCount = 0;
 	}
 
-	public void Add(BitsWithLength bitsWithLength)
+	public void Add(int bits, int count)
 	{
-		var totalBits = bitsWithLength.BitsCount + unfinishedBits.BitsCount;
-		var combined = (unfinishedBits.Bits <<  bitsWithLength.BitsCount) | bitsWithLength.Bits;
-		
-		while (totalBits >= 8)
+		int totalCount = _pendingCount + count;
+		int totalBits = (_pendingBits << count) | bits;
+    
+		while (totalCount >= 8)
 		{
-			totalBits -= 8;
-			buffer[i++] = (byte)(combined >> totalBits);
-			combined &= (1 << totalBits) - 1;
+			totalCount -= 8;
+			_buffer[_position++] = (byte)(totalBits >> totalCount);
+			totalBits &= (1 << totalCount) - 1;
 		}
 
-		unfinishedBits.BitsCount = totalBits;
-		unfinishedBits.Bits = combined;
+		_pendingCount = totalCount;
+		_pendingBits = totalBits;
 	}
 
 	public byte[] ToArray(out long bitsCount)
 	{
-		bitsCount = i * 8L + unfinishedBits.BitsCount;
-		var byteCount = (bitsCount + 7) / 8;
-		var result = new byte[byteCount];
-		Array.Copy(buffer, 0, result, 0, i);
-		if (unfinishedBits.BitsCount > 0)
-			result[i] = (byte)(unfinishedBits.Bits << (8 - unfinishedBits.BitsCount));
+		bitsCount = ((long)_position << 3) + _pendingCount;
+		var result = new byte[(bitsCount + 7) >> 3];
+		Array.Copy(_buffer, 0, result, 0, _position);
+        
+		if (_pendingCount > 0)
+			result[_position] = (byte)(_pendingBits << (8 - _pendingCount));
+            
 		return result;
 	}
 }
@@ -92,9 +92,12 @@ class HuffmanCodec
 		var encodeTable = new BitsWithLength[byte.MaxValue + 1];
 		FillEncodeTable(root, encodeTable);
 
-		var bitsBuffer = new BitsBuffer(data.Count());
-		foreach (var b in data)
-			bitsBuffer.Add(encodeTable[b]);
+		var bitsBuffer = new BitsBuffer(data.Count);
+		for (var i = 0; i < data.Count; ++i)
+		{
+			var code = encodeTable[data[i]];
+			bitsBuffer.Add(code.Bits, code.BitsCount);
+		}
 
 		decodeTable = CreateDecodeTable(encodeTable);
 
@@ -130,12 +133,10 @@ class HuffmanCodec
 
 	private static Dictionary<BitsWithLength, byte> CreateDecodeTable(BitsWithLength[] encodeTable)
 	{
-		var result = new Dictionary<BitsWithLength, byte>(new BitsWithLength.Comparer());
+		var result = new Dictionary<BitsWithLength, byte>();
 		for (int b = 0; b < encodeTable.Length; b++)
 		{
 			var bitsWithLength = encodeTable[b];
-			if (bitsWithLength == null)
-				continue;
 
 			result[bitsWithLength] = (byte)b;
 		}

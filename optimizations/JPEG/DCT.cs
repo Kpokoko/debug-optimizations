@@ -10,65 +10,79 @@ public class DCT
 	private static double[] _precalcCosX;
 	private static double[] _precalcCosY;
 	private static readonly double AlphaValue = 1 / Math.Sqrt(2);
-	private static readonly Dictionary<(int height, int width), double> BetaStorage = new();
+	const double BetaValue = 0.25;
+	// private static readonly Dictionary<(int height, int width), double> BetaStorage = new();
 	
-	public static double[,] DCT2D(double[,] input)
+	public static double[] DCT2D(double[] input, int height, int width)
 	{
-		var height = input.GetLength(0);
-		var width = input.GetLength(1);
-		var temp = new double[width, height];
-		var coeffs = new double[width, height];
+		var temp = new double[width * height];
+		var coeffs = new double[width * height];
 		if (_precalcCosX is null || _precalcCosY is null)
 			PrepareCos(width, height);
 
-		MathEx.LoopByTwoVariables(
-			0, width,
-			0, height,
-			(x, v) =>
+		for (var x = 0; x < width; ++x)
+		{
+			var xOffset = x * height;
+			for (var v = 0; v < height; ++v)
 			{
 				var sum = 0d;
 				for (var y = 0; y < height; ++y)
-					sum += input[x, y] * _precalcCosY[y * height + v];
+					sum += input[xOffset + y] * _precalcCosY[y * height + v];
+				
+				temp[xOffset + v] = sum;
+			}
+		}
 
-				temp[x, v] = sum;
-			});
-
-		MathEx.LoopByTwoVariables(
-			0, width,
-			0, height,
-			(u, v) =>
+		for (var u = 0; u < width; ++u)
+		{
+			var alphaU = Alpha(u);
+			for (var v = 0; v < height; ++v)
 			{
 				var sum = 0d;
 				for (var x = 0; x < width; ++x)
-					sum += temp[x, v] * _precalcCosX[x * width + u];
+					sum += temp[x * height + v] * _precalcCosX[x * width + u];
 				
-				coeffs[u, v] = sum * Beta(height, width) * Alpha(u) * Alpha(v);
-			});
+				coeffs[u * height + v] = sum * BetaValue * alphaU * Alpha(v);
+				//coeffs[u, v] = sum * Beta(height, width) * Alpha(u) * Alpha(v);
+			}
+		}
 
 		return coeffs;
 	}
 
-	public static void IDCT2D(double[,] coeffs, double[,] output)
+	public static void IDCT2D(double[] coeffs, double[] output, int height, int width)
 	{
-		var height = coeffs.GetLength(0);
-		var width = coeffs.GetLength(1);
 		if (_precalcCosX is null || _precalcCosY is null)
 			PrepareCos(width, height);
 		
-		for (var x = 0; x < coeffs.GetLength(1); ++x)
+		var temp = new double[width * height];
+
+		for (var u = 0; u < width; ++u)
 		{
-			for (var y = 0; y < coeffs.GetLength(0); ++y)
+			var alphaU = Alpha(u);
+			var uOffset = u * height;
+        
+			for (var v = 0; v < height; ++v)
+			{
+				var coeff = coeffs[uOffset + v] * alphaU * Alpha(v) * BetaValue;
+				for (var x = 0; x < height; x++)
+				{
+					var cosX = _precalcCosX[x * width + u];
+					temp[x * width + v] += coeff * cosX;
+				}
+			}
+		}
+		
+		for (var x = 0; x < height; x++)
+		{
+			var xOffset = x * width;
+			for (var y = 0; y < width; y++)
 			{
 				var sum = 0d;
-				for (var u = 0; u < width; ++u)
-				{
-					var factorX = _precalcCosX![x * width + u];
-					for (var v = 0; v < height; ++v)
-						sum += coeffs[u, v] * factorX * _precalcCosY![y * height + v] * Alpha(v);
-					sum *= Alpha(u);
-				}
-
-				output[x, y] = sum * Beta(height, width);
+				for (var v = 0; v < height; v++)
+					sum += temp[xOffset + v] * _precalcCosY[y * height + v];
+				
+				output[xOffset + y] = sum;
 			}
 		}
 	}
@@ -107,15 +121,15 @@ public class DCT
 	[MethodImpl(MethodImplOptions.AggressiveInlining)]
 	private static double Alpha(int u) => u == 0 ? AlphaValue : 1;
 
-	[MethodImpl(MethodImplOptions.AggressiveInlining)]
-	private static double Beta(int height, int width)
-	{
-		// if (!BetaStorage.TryGetValue((height, width), out var beta))
-		// {
-		// 	beta = 1d / width + 1d / height;
-		// 	BetaStorage[(height, width)] = beta;
-		// }
-		// return beta;
-		return 0.25;
-	}
+	// [MethodImpl(MethodImplOptions.AggressiveInlining)]
+	// private static double Beta(int height, int width)
+	// {
+	// 	// if (!BetaStorage.TryGetValue((height, width), out var beta))
+	// 	// {
+	// 	// 	beta = 1d / width + 1d / height;
+	// 	// 	BetaStorage[(height, width)] = beta;
+	// 	// }
+	// 	// return beta;
+	// 	return 0.25;
+	// }
 }
