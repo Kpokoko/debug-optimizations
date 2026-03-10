@@ -1,7 +1,7 @@
-﻿namespace JPEG.Images;
-
-public enum PixelFormat
-{
-	RGB,
-	YCbCr,
-}
+﻿// namespace JPEG.Images;
+//
+// public enum PixelFormat
+// {
+// 	RGB,
+// 	YCbCr,
+// }

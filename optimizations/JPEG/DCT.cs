@@ -86,11 +86,6 @@ public class DCT
 			}
 		}
 	}
-	
-	// public static double BasisFunction(double a, int u, int v, int x, int y, int height, int width)
-	// {
-	// 	return a * _precalcCosX[x * width + u] * _precalcCosY[y * height + v];
-	// }
 
 	private static void PrepareCos(int width, int height)
 	{
