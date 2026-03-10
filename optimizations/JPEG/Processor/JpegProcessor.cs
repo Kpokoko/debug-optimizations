@@ -117,12 +117,12 @@ public class JpegProcessor : IJpegProcessor
 		}
 
 		long bitsCount;
-		Dictionary<BitsWithLength, byte> decodeTable;
+		HuffmanNode decodeTable;
 		var compressedBytes = HuffmanCodec.Encode(allQuantizedBytes, out decodeTable, out bitsCount);
 
 		return new CompressedImage
 		{
-			Quality = quality, CompressedBytes = compressedBytes, BitsCount = bitsCount, DecodeTable = decodeTable,
+			Quality = quality, CompressedBytes = compressedBytes, BitsCount = bitsCount, TreeRoot = decodeTable,
 			Height = height, Width = width
 		};
 	}
@@ -132,7 +132,7 @@ public class JpegProcessor : IJpegProcessor
 		var height = image.Height;
 		var width = image.Width;
 		var result = new Bitmap(width, height);
-		var quantizedBytes = HuffmanCodec.Decode(image.CompressedBytes, image.DecodeTable, image.BitsCount);
+		var quantizedBytes = HuffmanCodec.Decode(image.CompressedBytes, image.TreeRoot, image.BitsCount);
 		int quantIndex = 0;
 		var blockSize = DCTSize * 2;
 		

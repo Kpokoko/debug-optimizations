@@ -7,7 +7,7 @@ using JPEG.Utilities;
 
 namespace JPEG;
 
-class HuffmanNode
+public class HuffmanNode
 {
 	public byte? LeafLabel { get; set; }
 	public int Frequency { get; set; }
@@ -81,67 +81,88 @@ class BitsBuffer
 }
 
 class HuffmanCodec
-{
-	public static byte[] Encode(List<byte> data, out Dictionary<BitsWithLength, byte> decodeTable,
-		out long bitsCount)
+{public static byte[] Encode(List<byte> data, out HuffmanNode treeRoot, out long bitsCount)
 	{
 		var frequences = CalcFrequences(data);
-
-		var root = BuildHuffmanTree(frequences);
+		treeRoot = BuildHuffmanTree(frequences);
 
 		var encodeTable = new BitsWithLength[byte.MaxValue + 1];
-		FillEncodeTable(root, encodeTable);
+		FillEncodeTable(treeRoot, encodeTable);
 
-		var bitsBuffer = new BitsBuffer(data.Count);
-		for (var i = 0; i < data.Count; ++i)
+		var threadCount = Environment.ProcessorCount;
+		var chunkSize = (data.Count + threadCount - 1) / threadCount;
+		var chunks = new (byte[] bytes, long bits)[threadCount];
+
+		Parallel.For(0, threadCount, i =>
 		{
-			var code = encodeTable[data[i]];
-			bitsBuffer.Add(code.Bits, code.BitsCount);
-		}
+			var start = i * chunkSize;
+			var end = Math.Min(start + chunkSize, data.Count);
+			if (start >= end) { chunks[i] = (Array.Empty<byte>(), 0); return; }
 
-		decodeTable = CreateDecodeTable(encodeTable);
+			var buffer = new BitsBuffer(end - start);
+			for (var j = start; j < end; j++)
+			{
+				var code = encodeTable[data[j]];
+				buffer.Add(code.Bits, code.BitsCount);
+			}
+			chunks[i] = (buffer.ToArray(out var chunkBits), chunkBits);
+		});
 
-		return bitsBuffer.ToArray(out bitsCount);
+		return MergeChunks(chunks, out bitsCount);
 	}
 
-	public static byte[] Decode(byte[] encodedData, Dictionary<BitsWithLength, byte> decodeTable, long bitsCount)
+	private static byte[] MergeChunks((byte[] bytes, long bits)[] chunks, out long totalBits)
+	{
+		totalBits = 0;
+		foreach (var c in chunks) totalBits += c.bits;
+
+		var result = new byte[(totalBits + 7) / 8];
+		var bitPos = 0L;
+
+		foreach (var (bytes, bits) in chunks)
+		{
+			var byteOffset = (int)(bitPos >> 3);
+			var bitOffset  = (int)(bitPos & 7);
+
+			if (bitOffset == 0)
+				Array.Copy(bytes, 0, result, byteOffset, bytes.Length);
+			else
+			{
+				for (var i = 0; i < bytes.Length; i++)
+				{
+					result[byteOffset + i]     |= (byte)(bytes[i] >> bitOffset);
+					if (byteOffset + i + 1 < result.Length)
+						result[byteOffset + i + 1] |= (byte)(bytes[i] << (8 - bitOffset));
+				}
+			}
+
+			bitPos += bits;
+		}
+
+		return result;
+	}
+	
+	public static byte[] Decode(byte[] encodedData, HuffmanNode treeRoot, long bitsCount)
 	{
 		var result = new List<byte>();
+		var node = treeRoot;
 
-		byte decodedByte;
-		var sample = new BitsWithLength { Bits = 0, BitsCount = 0 };
-		for (var byteNum = 0; byteNum < encodedData.Length; byteNum++)
+		for (var byteNum = 0; byteNum < encodedData.Length; ++byteNum)
 		{
 			var b = encodedData[byteNum];
-			for (var bitNum = 0; bitNum < 8 && byteNum * 8 + bitNum < bitsCount; bitNum++)
+			for (var bitNum = 0; bitNum < 8 && byteNum * 8 + bitNum < bitsCount; ++bitNum)
 			{
-				sample.Bits = (sample.Bits << 1) + ((b & (1 << (8 - bitNum - 1))) != 0 ? 1 : 0);
-				sample.BitsCount++;
+				node = (b & (1 << (7 - bitNum))) != 0 ? node.Left : node.Right;
 
-				if (decodeTable.TryGetValue(sample, out decodedByte))
+				if (node.LeafLabel != null)
 				{
-					result.Add(decodedByte);
-
-					sample.BitsCount = 0;
-					sample.Bits = 0;
+					result.Add(node.LeafLabel.Value);
+					node = treeRoot;
 				}
 			}
 		}
 
 		return result.ToArray();
-	}
-
-	private static Dictionary<BitsWithLength, byte> CreateDecodeTable(BitsWithLength[] encodeTable)
-	{
-		var result = new Dictionary<BitsWithLength, byte>();
-		for (int b = 0; b < encodeTable.Length; b++)
-		{
-			var bitsWithLength = encodeTable[b];
-
-			result[bitsWithLength] = (byte)b;
-		}
-
-		return result;
 	}
 
 	private static void FillEncodeTable(HuffmanNode node, BitsWithLength[] encodeSubstitutionTable,

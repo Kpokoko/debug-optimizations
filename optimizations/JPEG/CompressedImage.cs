@@ -11,7 +11,7 @@ public class CompressedImage
 
 	public int Quality { get; set; }
 		
-	public Dictionary<BitsWithLength, byte> DecodeTable { get; set; }
+	public HuffmanNode TreeRoot { get; set; }
 
 	public long BitsCount { get; set; }
 	public byte[] CompressedBytes { get; set; }
@@ -31,22 +31,7 @@ public class CompressedImage
 			buffer = BitConverter.GetBytes(Quality);
 			sw.Write(buffer, 0, buffer.Length);
 
-			buffer = BitConverter.GetBytes(DecodeTable.Count);
-			sw.Write(buffer, 0, buffer.Length);
-
-			foreach(var kvp in DecodeTable)
-			{
-				var bits = kvp.Key.Bits;
-				buffer = BitConverter.GetBytes(bits);
-				sw.Write(buffer, 0, buffer.Length);
-
-				var bitsCount = kvp.Key.BitsCount;
-				buffer = BitConverter.GetBytes(bitsCount);
-				sw.Write(buffer, 0, buffer.Length);
-
-				var mappedByte = kvp.Value;
-				sw.WriteByte(mappedByte);
-			}
+			WriteTree(sw, TreeRoot);
 
 			buffer = BitConverter.GetBytes(BitsCount);
 			sw.Write(buffer, 0, buffer.Length);
@@ -74,21 +59,7 @@ public class CompressedImage
 			sr.Read(buffer, 0, 4);
 			result.Quality = BitConverter.ToInt32(buffer, 0);
 
-			sr.Read(buffer, 0, 4);
-			var decodeTableSize = BitConverter.ToInt32(buffer, 0);
-			result.DecodeTable = new Dictionary<BitsWithLength, byte>(decodeTableSize);
-
-			for(int i = 0; i < decodeTableSize; i++)
-			{
-				sr.Read(buffer, 0, 4);
-				var bits = BitConverter.ToInt32(buffer, 0);
-
-				sr.Read(buffer, 0, 4);
-				var bitsCount = BitConverter.ToInt32(buffer, 0);
-
-				var mappedByte = (byte)sr.ReadByte();
-				result.DecodeTable[new BitsWithLength {Bits = bits, BitsCount = bitsCount}] = mappedByte;
-			}
+			result.TreeRoot = ReadTree(sr);
 
 			sr.Read(buffer, 0, 8);
 			result.BitsCount = BitConverter.ToInt64(buffer, 0);
@@ -102,5 +73,33 @@ public class CompressedImage
 				totalRead += sr.Read(result.CompressedBytes, totalRead, compressedBytesCount - totalRead);
 		}
 		return result;
+	}
+	
+	private static void WriteTree(Stream s, HuffmanNode node)
+	{
+		if (node.LeafLabel != null)
+		{
+			s.WriteByte(1);
+			s.WriteByte(node.LeafLabel.Value);
+		}
+		else
+		{
+			s.WriteByte(0);
+			WriteTree(s, node.Left);
+			WriteTree(s, node.Right);
+		}
+	}
+
+	private static HuffmanNode ReadTree(Stream s)
+	{
+		var flag = s.ReadByte();
+		if (flag == 1)
+			return new HuffmanNode { LeafLabel = (byte)s.ReadByte() };
+
+		return new HuffmanNode
+		{
+			Left  = ReadTree(s),
+			Right = ReadTree(s)
+		};
 	}
 }
