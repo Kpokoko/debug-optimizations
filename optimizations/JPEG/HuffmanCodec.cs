@@ -81,7 +81,7 @@ class BitsBuffer
 }
 
 class HuffmanCodec
-{public static byte[] Encode(List<byte> data, out HuffmanNode treeRoot, out long bitsCount)
+{public static byte[] Encode(byte[] data, out HuffmanNode treeRoot, out long bitsCount)
 	{
 		var frequences = CalcFrequences(data);
 		treeRoot = BuildHuffmanTree(frequences);
@@ -90,13 +90,13 @@ class HuffmanCodec
 		FillEncodeTable(treeRoot, encodeTable);
 
 		var threadCount = Environment.ProcessorCount;
-		var chunkSize = (data.Count + threadCount - 1) / threadCount;
+		var chunkSize = (data.Length + threadCount - 1) / threadCount;
 		var chunks = new (byte[] bytes, long bits)[threadCount];
 
 		Parallel.For(0, threadCount, i =>
 		{
 			var start = i * chunkSize;
-			var end = Math.Min(start + chunkSize, data.Count);
+			var end = Math.Min(start + chunkSize, data.Length);
 			if (start >= end) { chunks[i] = (Array.Empty<byte>(), 0); return; }
 
 			var buffer = new BitsBuffer(end - start);
@@ -208,10 +208,10 @@ class HuffmanCodec
 		return queue;
 	}
 
-	private static int[] CalcFrequences(List<byte> data)
+	private static int[] CalcFrequences(byte[] data)
 	{
 		var result = new int[byte.MaxValue + 1];
-		for (var i = 0; i < data.Count; ++i)
+		for (var i = 0; i < data.Length; ++i)
 			++result[data[i]];
 		return result;
 	}
