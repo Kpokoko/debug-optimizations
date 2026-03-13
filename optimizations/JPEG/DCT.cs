@@ -10,8 +10,6 @@ public class DCT
 {
 	private static double[] _precalcCosX;
 	private static double[] _precalcCosY;
-	private static double[] _temp;
-	private static double[] _coeffs;
 	private static readonly double AlphaValue = 0.70710678118;
 	const double BetaValue = 0.25;
 	// private static readonly Dictionary<(int height, int width), double> BetaStorage = new();
@@ -64,15 +62,12 @@ public class DCT
 	    }
 	}
 
-	public static void IDCT2D(double[] coeffs, double[] output, int height, int width)
+	public static void IDCT2D(ReadOnlySpan<double> coeffs, Span<double> output, int height, int width)
 	{
 		if (_precalcCosX is null || _precalcCosY is null)
 			PrepareCos(width, height);
-    
-		if (_temp is null)
-			_temp = new double[width * height];
-		else
-			Array.Clear(_temp, 0, _temp.Length);
+		
+		Span<double> temp = stackalloc double[64];
 		
 		for (var u = 0; u < width; ++u)
 		{
@@ -86,7 +81,7 @@ public class DCT
 				for (var x = 0; x < width; ++x)
 				{
 					var cosX = _precalcCosX[uCosOffset + x];
-					_temp[x * width + v] += coeff * cosX;
+					temp[x * width + v] += coeff * cosX;
 				}
 			}
 		}
@@ -98,7 +93,7 @@ public class DCT
 			{
 				var sum = 0d;
 				for (var v = 0; v < height; v++)
-					sum += _temp[xOffset + v] * _precalcCosY[v * height + y];
+					sum += temp[xOffset + v] * _precalcCosY[v * height + y];
             
 				output[xOffset + y] = sum;
 			}
