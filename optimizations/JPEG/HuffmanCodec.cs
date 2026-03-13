@@ -81,7 +81,8 @@ class BitsBuffer
 }
 
 class HuffmanCodec
-{public static byte[] Encode(byte[] data, out HuffmanNode treeRoot, out long bitsCount)
+{
+	public static byte[] Encode(byte[] data, out HuffmanNode treeRoot, out long bitsCount)
 	{
 		var frequences = CalcFrequences(data);
 		treeRoot = BuildHuffmanTree(frequences);
@@ -199,12 +200,15 @@ class HuffmanCodec
 
 	private static PriorityQueue<HuffmanNode, int> GetNodes(int[] frequences)
 	{
-		var nodes = Enumerable.Range(0, byte.MaxValue + 1)
-			.Select(num => new HuffmanNode { Frequency = frequences[num], LeafLabel = (byte)num })
-			.Where(node => node.Frequency > 0);
 		var queue = new PriorityQueue<HuffmanNode, int>();
-		foreach (var node in nodes)
-			queue.Enqueue(node, node.Frequency);
+		for (var i = 0; i < frequences.Length; ++i)
+		{
+			if (frequences[i] > 0)
+			{
+				var node = new HuffmanNode { Frequency = frequences[i], LeafLabel = (byte)i };
+				queue.Enqueue(node, node.Frequency);
+			}
+		}
 		return queue;
 	}
 

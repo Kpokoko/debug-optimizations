@@ -12,72 +12,56 @@ public class DCT
 	private static double[] _precalcCosY;
 	private static double[] _temp;
 	private static double[] _coeffs;
-	private static readonly double AlphaValue = 1 / Math.Sqrt(2);
+	private static readonly double AlphaValue = 0.70710678118;
 	const double BetaValue = 0.25;
 	// private static readonly Dictionary<(int height, int width), double> BetaStorage = new();
 	
-	public static double[] DCT2D(double[] input, int height, int width)
+	[MethodImpl(MethodImplOptions.AggressiveInlining)]
+	public static void DCT2D(Span<double> input, int height, int width)
 	{
 	    if (_precalcCosX is null || _precalcCosY is null)
 	        PrepareCos(width, height);
 
-	    if (_coeffs is null)
-	    {
-		    _coeffs = new double[width * height];
-		    _temp = new double[width * height];
-	    }
-
+	    Span<double> temp = stackalloc double[64];
 	    var vecSize = Vector<double>.Count;
-	    for (var x = 0; x < width; ++x)
-	    {
-		    var xOffset = x * height;
-	        for (var v = 0; v < height; ++v)
-	        {
-	            var sumVec = Vector<double>.Zero;
-	            int y;
 
-	            for (y = 0; y <= height - vecSize; y += vecSize)
+	    for (var v = 0; v < height; ++v)
+	    {
+	        int rowOffset = v * width;
+	        for (var u = 0; u < width; ++u)
+	        {
+	            var cosOffset = u * width;
+	            var sumVec = Vector<double>.Zero;
+	            var x = 0;
+	            
+	            for (; x <= width - vecSize; x += vecSize)
 	            {
-	                var nextValues = new Vector<double>(input, xOffset + y);
-	                var cosVec = new Vector<double>(_precalcCosY!, v * height + y);
-	                sumVec += nextValues * cosVec;
+	                var valVec = new Vector<double>(input.Slice(rowOffset + x, vecSize));
+	                var cosVec = new Vector<double>(_precalcCosX, cosOffset + x);
+	                sumVec += valVec * cosVec;
 	            }
 
-	            var sum = 0d;
-	            for (var i = 0; i < vecSize; i++) sum += sumVec[i];
+	            double sum = Vector.Dot(sumVec, Vector<double>.One);
 
-	            for (var yRem = y; yRem < height; yRem++)
-	                sum += input[xOffset + yRem] * _precalcCosY![v * height + yRem];
-	            _temp[v * width + x] = sum;
-	        }
-	    }
-	    
-	    for (var u = 0; u < width; ++u)
-	    {
-		    var alphaU = u ==0 ? 0.70710678118 : 1;
-	        var uOffset = u * width;
-	        for (var v = 0; v < height; ++v)
-	        {
-	            var sumVec = Vector<double>.Zero;
-	            int x;
+	            for (; x < width; x++)
+	                sum += input[rowOffset + x] * _precalcCosX[cosOffset + x];
 
-	            for (x = 0; x <= width - vecSize; x += vecSize)
-	            {
-	                var nextValues = new Vector<double>(_temp, v * width + x);
-	                var cosVec = new Vector<double>(_precalcCosX!, uOffset + x);
-	                sumVec += nextValues * cosVec;
-	            }
-
-	            var sum = 0d;
-	            for (var i = 0; i < vecSize; i++) sum += sumVec[i];
-	            for (var xRem = x; xRem < width; ++xRem)
-	                sum += _temp[v * width + xRem] * _precalcCosX![uOffset + xRem];
-
-	            _coeffs[u * height + v] = sum * BetaValue * alphaU * (v ==0 ? 0.70710678118 : 1);
+	            temp[rowOffset + u] = sum * (u == 0 ? 0.70710678118 : 1.0);
 	        }
 	    }
 
-	    return _coeffs;
+	    for (var u = 0; u < width; u++)
+	    {
+	        for (var v = 0; v < height; v++)
+	        {
+	            var cosOffset = v * height;
+	            var sum = 0d;
+	            for (var y = 0; y < height; y++)
+	                sum += temp[y * width + u] * _precalcCosY[cosOffset + y];
+
+	            input[v * width + u] = sum * (v == 0 ? 0.70710678118 : 1.0) * 0.25;
+	        }
+	    }
 	}
 
 	public static void IDCT2D(double[] coeffs, double[] output, int height, int width)

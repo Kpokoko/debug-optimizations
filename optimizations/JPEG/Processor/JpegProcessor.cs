@@ -12,68 +12,71 @@ public class JpegProcessor : IJpegProcessor
 	public static readonly JpegProcessor Init = new();
 	public const int CompressionQuality = 70;
 	private const int DCTSize = 8;
+	private static readonly Dictionary<int, int[]> QuantizeCache = new();
 
 	public void Compress(string imagePath, string compressedImagePath)
 	{
-		using var fileStream = File.OpenRead(imagePath);
-		using var bmp = (Bitmap)Image.FromStream(fileStream, false, false);
-		var y = new double[bmp.Height * bmp.Width];
-		var cb =  new double[bmp.Height / 2 * bmp.Width / 2];
-		var cr = new double[bmp.Height / 2 * bmp.Width / 2];
-		PreparePixelsInfo(y, cb, cr, bmp);
-		var compressionResult = Compress(y, cb, cr, bmp.Width, bmp.Height, CompressionQuality);
-		compressionResult.Save(compressedImagePath);
+	    using var fileStream = File.OpenRead(imagePath);
+	    using var bmp = (Bitmap)Image.FromStream(fileStream, false, false);
+	    
+	    var height = bmp.Height - bmp.Height % 8;
+	    var width  = bmp.Width  - bmp.Width  % 8;
+	    
+	    var y  = new double[height * width];
+	    var cb = new double[height / 2 * width / 2];
+	    var cr = new double[height / 2 * width / 2];
+	    PreparePixelsInfo(y, cb, cr, bmp, width, height);
+	    var compressionResult = Compress(y, cb, cr, width, height, CompressionQuality);
+	    compressionResult.Save(compressedImagePath);
 	}
 
-	private unsafe void PreparePixelsInfo(double[] y, double[] cb, double[] cr, Bitmap bmp)
+	private unsafe void PreparePixelsInfo(double[] y, double[] cb, double[] cr, Bitmap bmp, int width, int height)
 	{
-		int fullWidth = bmp.Width;
-		var height = bmp.Height - bmp.Height % 8;
-		var width = bmp.Width - bmp.Width % 8;
-		
-		var rect = new Rectangle(0, 0, width, height);
-		var bmpData = bmp.LockBits(rect, ImageLockMode.ReadOnly, bmp.PixelFormat);
-		var pixelFormat = bmp.PixelFormat;
-		var pixelSize = pixelFormat is PixelFormat.Format24bppRgb ? 3 : 
-				pixelFormat is PixelFormat.Format32bppArgb ? 4 : 
-				pixelFormat is PixelFormat.Format32bppRgb ? 4 :
-					throw new NotSupportedException("Unsupported pixel format");
+	    var rect = new Rectangle(0, 0, width, height);
+	    var bmpData = bmp.LockBits(rect, ImageLockMode.ReadOnly, bmp.PixelFormat);
+	    var pixelSize = bmp.PixelFormat switch
+	    {
+	        PixelFormat.Format24bppRgb  => 3,
+	        PixelFormat.Format32bppArgb => 4,
+	        PixelFormat.Format32bppRgb  => 4,
+	        _ => throw new NotSupportedException("Unsupported pixel format")
+	    };
 
-		Parallel.For(0, height / 2, jBlock =>
-		{
-			var j = jBlock * 2;
-			var row1 = (byte*)bmpData.Scan0 + j * bmpData.Stride;
-			var row2 = row1 + bmpData.Stride;
-			var yOffset = j * fullWidth;
-			for (var i = 0; i < width; i += 2)
-			{
-				var cbSum = 0d;
-				var crSum = 0d;
-				for (var dy = 0; dy < 2; ++dy)
-				{
-					var row = dy == 0 ? row1 : row2;
-					for (var dx = 0; dx < 2; ++dx)
-					{
-						var pixel = row + (i + dx) * pixelSize;
-						var b = pixel[0];
-						var g = pixel[1];
-						var r = pixel[2];
-						var index = yOffset + dy * fullWidth + i + dx;
-						y[index] = 16.0 + (65.738 * r + 129.057 * g + 24.064 * b) / 256.0;
-						cbSum += 128.0 + (-37.945 * r - 74.494 * g + 112.439 * b) / 256.0;
-						crSum += 128.0 + (112.439 * r - 94.154 * g - 18.285 * b) / 256.0;
-					}
-				}
+	    Parallel.For(0, height / 2, jBlock =>
+	    {
+	        var j    = jBlock * 2;
+	        var row1 = (byte*)bmpData.Scan0 + j * bmpData.Stride;
+	        var row2 = row1 + bmpData.Stride;
+	        var yRowOffset = j * width;  // теперь stride = width везде одинаковый
+	        var cbWidth = width / 2;
 
-				var cbWidth = width / 2;
-				var cbCrIndex = j / 2 * cbWidth + i / 2;
+	        for (var i = 0; i < width; i += 2)
+	        {
+	            var cbSum = 0d;
+	            var crSum = 0d;
+	            for (var dy = 0; dy < 2; ++dy)
+	            {
+	                var row = dy == 0 ? row1 : row2;
+	                for (var dx = 0; dx < 2; ++dx)
+	                {
+	                    var pixel = row + (i + dx) * pixelSize;
+	                    var b = pixel[0];
+	                    var g = pixel[1];
+	                    var r = pixel[2];
+	                    var index = yRowOffset + dy * width + i + dx;
+	                    y[index] = 16.0 + (65.738 * r + 129.057 * g + 24.064 * b) / 256.0;
+	                    cbSum += 128.0 + (-37.945 * r - 74.494 * g + 112.439 * b) / 256.0;
+	                    crSum += 128.0 + (112.439 * r - 94.154 * g - 18.285 * b) / 256.0;
+	                }
+	            }
 
-				cb[cbCrIndex] = cbSum / 4;
-				cr[cbCrIndex] = crSum / 4;
-			}
-		});
-		
-		bmp.UnlockBits(bmpData);
+	            var cbCrIndex = j / 2 * cbWidth + i / 2;
+	            cb[cbCrIndex] = cbSum / 4;
+	            cr[cbCrIndex] = crSum / 4;
+	        }
+	    });
+
+	    bmp.UnlockBits(bmpData);
 	}
 
 	public void Uncompress(string compressedImagePath, string uncompressedImagePath)
@@ -86,43 +89,43 @@ public class JpegProcessor : IJpegProcessor
 	private static CompressedImage Compress(double[] yChannel, double[] cb, double[] cr,
 		int width, int height, int quality = 50)
 	{
-		var blocksX = width / (DCTSize * 2);
-		var blocksY = height / (DCTSize * 2);
+		var blocksX = (width + DCTSize * 2 - 1) / (DCTSize * 2);
+		var blocksY = (height + DCTSize * 2 - 1) / (DCTSize * 2);
 		var totalYBlocks = blocksX * blocksY * 4;
 		var totalCbCrBlocks = blocksX * blocksY;
 		var allQuantizedBytes = new byte[(totalYBlocks + totalCbCrBlocks * 2) * 64];
+		Span<double> blockBuffer = stackalloc double[64];
 		var offset = 0;
+		var alignedWidth = blocksX * DCTSize * 2;
+		var alignedHeight = blocksY * DCTSize * 2;
 
-		for (var y = 0; y < height; y += DCTSize * 2)
+		for (var y = 0; y < alignedHeight; y += DCTSize * 2)
+		for (var x = 0; x < alignedWidth; x += DCTSize * 2)
 		{
-			for (var x = 0; x < width; x += DCTSize * 2)
+			for (var dy = 0; dy < DCTSize * 2; dy += DCTSize)
+			for (var dx = 0; dx < DCTSize * 2; dx += DCTSize)
 			{
-				for (var dy = 0; dy < DCTSize * 2; dy += DCTSize)
-				for (var dx = 0; dx < DCTSize * 2; dx += DCTSize)
-				{
-						var subMatrix = GetSubMatrix(yChannel, y + dy, DCTSize,
-							x + dx, DCTSize, width);
-						ShiftMatrixValues(subMatrix, DCTSize, DCTSize, -128);
-						var channelFreqs = DCT.DCT2D(subMatrix, DCTSize, DCTSize);
-						var quantizedFreqs = Quantize(channelFreqs, quality);
-						ZigZagScan(quantizedFreqs, allQuantizedBytes, offset);offset += 64;
-				}
-
-				var cbWidth = width / 2;
-				var cbBlock = GetSubMatrix(cb, y / 2, DCTSize, x / 2, DCTSize, cbWidth);
-				ShiftMatrixValues(cbBlock, DCTSize, DCTSize, -128);
-				var cbFreqs = DCT.DCT2D(cbBlock, DCTSize, DCTSize);
-				var cbQuant = Quantize(cbFreqs, quality);
-				ZigZagScan(cbQuant, allQuantizedBytes, offset);
-				offset += 64;
-				
-				var crBlock = GetSubMatrix(cr, y / 2, DCTSize, x / 2, DCTSize, cbWidth);
-				ShiftMatrixValues(crBlock, DCTSize, DCTSize, -128);
-				var crFreqs = DCT.DCT2D(crBlock, DCTSize, DCTSize);
-				var crQuant = Quantize(crFreqs, quality);
-				ZigZagScan(crQuant, allQuantizedBytes, offset);
+				GetSubMatrix(yChannel, y + dy, DCTSize, x + dx, DCTSize, width, height, blockBuffer);
+				ShiftMatrixValues(blockBuffer, DCTSize, DCTSize, -128);
+				DCT.DCT2D(blockBuffer, DCTSize, DCTSize);
+				QuantizeAndZigZagInPlace(blockBuffer, quality, allQuantizedBytes, offset);
 				offset += 64;
 			}
+
+			var cbWidth = width / 2;
+			var cbHeight = height / 2;
+
+			GetSubMatrix(cb, y / 2, DCTSize, x / 2, DCTSize, cbWidth, cbHeight, blockBuffer);
+			ShiftMatrixValues(blockBuffer, DCTSize, DCTSize, -128);
+			DCT.DCT2D(blockBuffer, DCTSize, DCTSize);
+			QuantizeAndZigZagInPlace(blockBuffer, quality, allQuantizedBytes, offset);
+			offset += 64;
+
+			GetSubMatrix(cr, y / 2, DCTSize, x / 2, DCTSize, cbWidth, cbHeight, blockBuffer);
+			ShiftMatrixValues(blockBuffer, DCTSize, DCTSize, -128);
+			DCT.DCT2D(blockBuffer, DCTSize, DCTSize);
+			QuantizeAndZigZagInPlace(blockBuffer, quality, allQuantizedBytes, offset);
+			offset += 64;
 		}
 
 		long bitsCount;
@@ -136,86 +139,99 @@ public class JpegProcessor : IJpegProcessor
 		};
 	}
 
-	private static Bitmap Uncompress(CompressedImage image)
+	private static unsafe Bitmap Uncompress(CompressedImage image)
 	{
 		var height = image.Height;
 		var width = image.Width;
 		var result = new Bitmap(width, height);
+		var rect = new Rectangle(0, 0, width, height);
+		var bmpData = result.LockBits(rect, ImageLockMode.WriteOnly, result.PixelFormat);
+		var pixelSize = result.PixelFormat is PixelFormat.Format24bppRgb ? 3 : 4;
+		var scan = (byte*)bmpData.Scan0;
+		var stride = bmpData.Stride;
 		var quantizedBytes = HuffmanCodec.Decode(image.CompressedBytes, image.TreeRoot, image.BitsCount);
-		int quantIndex = 0;
+		var quantIndex = 0;
 		var blockSize = DCTSize * 2;
+
+		var blocksX = (width + DCTSize * 2 - 1) / (DCTSize * 2);
+		var blocksY = (height + DCTSize * 2 - 1) / (DCTSize * 2);
+		var alignedWidth = blocksX * DCTSize * 2;
+		var alignedHeight = blocksY * DCTSize * 2;
 		
-		for (var y = 0; y < height; y += DCTSize * 2)
+		var yChannel = new double[blockSize * blockSize];
+		var cbChannel = new double[DCTSize * DCTSize];
+		var crChannel = new double[DCTSize * DCTSize];
+		var preIDCTBuffer = new double[DCTSize * DCTSize];
+		var postIDCTBuffer = new double[DCTSize * DCTSize];
+
+		for (var y = 0; y < alignedHeight; y += blockSize)
+		for (var x = 0; x < alignedWidth; x += blockSize)
 		{
-			for (var x = 0; x < width; x += DCTSize * 2)
+			for (var dy = 0; dy < DCTSize * 2; dy += DCTSize)
+			for (var dx = 0; dx < DCTSize * 2; dx += DCTSize)
 			{
-				var yChannel = new double[blockSize * blockSize];
-				var cbChannel = new double[DCTSize * DCTSize];
-				var crChannel = new double[DCTSize * DCTSize];
-				for (var dy = 0; dy < DCTSize * 2; dy += DCTSize)
-				for (var dx = 0; dx < DCTSize * 2; dx += DCTSize)
-				{
-					var quantizedBlock = new byte[DCTSize * DCTSize];
-					Array.Copy(quantizedBytes, quantIndex, quantizedBlock, 0, DCTSize * DCTSize);
-					quantIndex += DCTSize * DCTSize;
-					
-					var channelFreqs = DeQuantize(ZigZagUnScan(quantizedBlock), image.Quality);
-					var channel = new double[DCTSize * DCTSize];
-					DCT.IDCT2D(channelFreqs, channel, DCTSize, DCTSize);
-					ShiftMatrixValues(channel, DCTSize, DCTSize, 128);
-					for (var j = 0; j < DCTSize; j++)
-						Array.Copy(channel, j * DCTSize, yChannel, (dy + j) * blockSize + dx, DCTSize);
-				}
-
-				var cbQuant = new byte[DCTSize * DCTSize];
-				Array.Copy(quantizedBytes, quantIndex, cbQuant, 0, DCTSize * DCTSize);
+				var quantizedBlock = new ReadOnlySpan<byte>(quantizedBytes, quantIndex, DCTSize * DCTSize);
 				quantIndex += DCTSize * DCTSize;
-				var cbFreqs = DeQuantize(ZigZagUnScan(cbQuant), image.Quality);
-				DCT.IDCT2D(cbFreqs, cbChannel, DCTSize, DCTSize);
-				ShiftMatrixValues(cbChannel, DCTSize, DCTSize, 128);
 
-				var crQuant = new byte[DCTSize * DCTSize];
-				Array.Copy(quantizedBytes, quantIndex, crQuant, 0, DCTSize * DCTSize);
-				quantIndex += DCTSize * DCTSize;
-				var crFreqs = DeQuantize(ZigZagUnScan(crQuant), image.Quality);
-				DCT.IDCT2D(crFreqs, crChannel, DCTSize, DCTSize);
-				ShiftMatrixValues(crChannel, DCTSize, DCTSize, 128);
-
-				SetPixels(result, yChannel, cbChannel, crChannel, y, x);
+				DequantizeAndZigZagInPlace(quantizedBlock, image.Quality, preIDCTBuffer);
+				DCT.IDCT2D(preIDCTBuffer, postIDCTBuffer, DCTSize, DCTSize);
+				ShiftMatrixValues(postIDCTBuffer, DCTSize, DCTSize, 128);
+				for (var j = 0; j < DCTSize; j++)
+					Array.Copy(postIDCTBuffer, j * DCTSize, yChannel, (dy + j) * blockSize + dx, DCTSize);
 			}
+
+			var cbQuant = new ReadOnlySpan<byte>(quantizedBytes, quantIndex, DCTSize * DCTSize);
+			quantIndex += DCTSize * DCTSize;
+			DequantizeAndZigZagInPlace(cbQuant, image.Quality, preIDCTBuffer);
+			DCT.IDCT2D(preIDCTBuffer, postIDCTBuffer, DCTSize, DCTSize);
+			ShiftMatrixValues(postIDCTBuffer, DCTSize, DCTSize, 128);
+			Array.Copy(postIDCTBuffer, 0, cbChannel, 0, 64);
+
+			var crQuant = new ReadOnlySpan<byte>(quantizedBytes, quantIndex, DCTSize * DCTSize);
+			quantIndex += DCTSize * DCTSize;
+			DequantizeAndZigZagInPlace(crQuant, image.Quality, preIDCTBuffer);
+			DCT.IDCT2D(preIDCTBuffer, postIDCTBuffer, DCTSize, DCTSize);
+			ShiftMatrixValues(postIDCTBuffer, DCTSize, DCTSize, 128);
+			Array.Copy(postIDCTBuffer, 0, crChannel, 0, 64);
+
+			var drawWidth  = Math.Min(blockSize, width  - x);
+			var drawHeight = Math.Min(blockSize, height - y);
+			if (drawWidth > 0 && drawHeight > 0)
+				SetPixelsDirect(scan, stride, pixelSize, yChannel, cbChannel,
+					crChannel, y, x, drawWidth, drawHeight);
 		}
+		result.UnlockBits(bmpData);
 
 		return result;
 	}
 
-	private static void ShiftMatrixValues(double[] subMatrix, int height, int width, int shiftValue)
+	private static void ShiftMatrixValues(Span<double> buffer, int height, int width, int shiftValue)
 	{
 		for (int i = 0; i < height * width; i++)
-			subMatrix[i] += shiftValue;
+			buffer[i] += shiftValue;
 	}
 
-	private static unsafe void SetPixels(Bitmap bmp, double[] yChannel, double[] cbChannel, double[] crChannel,
-		int yOffset, int xOffset)
+	private static unsafe void SetPixelsDirect(byte* scan0, int stride, int pixelSize, 
+		double[] yChannel, double[] cbChannel, double[] crChannel,
+		int yOffset, int xOffset, int blockW, int blockH)
 	{
 		var blockSize = DCTSize * 2;
-		var rect = new Rectangle(xOffset, yOffset, blockSize, blockSize);
-		var bmpData = bmp.LockBits(rect, ImageLockMode.WriteOnly, bmp.PixelFormat);
-		var pixelSize = bmp.PixelFormat is PixelFormat.Format24bppRgb ? 3 : 4;
 		
-		for (int y = 0; y < blockSize; ++y)
+		for (var y = 0; y < blockH; ++y)
 		{
-			var row = (byte*)bmpData.Scan0 + y * bmpData.Stride;
+			var row = scan0 + (yOffset + y) * stride + xOffset * pixelSize;
 			var index = y * blockSize;
-			for (int x = 0; x < blockSize; ++x)
+			for (int x = 0; x < blockW; ++x)
 			{
-				var _y = yChannel[index + x];
+				var _y = yChannel[index + x] - 16;
 				var cbIndex = (y / 2) * DCTSize + (x / 2);
-				var cb = cbChannel[cbIndex];
-				var cr = crChannel[cbIndex];
+				var cb = cbChannel[cbIndex] - 128;
+				var cr = crChannel[cbIndex] - 128;
 
-				var r = (298.082 * _y + 408.583 * cr) / 256.0 - 222.921;
-				var g = (298.082 * _y - 100.291 * cb - 208.120 * cr) / 256.0 + 135.576;
-				var b = (298.082 * _y + 516.412 * cb) / 256.0 - 276.836;
+				var y1 = 1.164 * _y;
+				var r = y1 + 1.596 * cr;
+				var g = y1 - 0.392 * cb - 0.813 * cr;
+				var b = y1 + 2.017 * cb;
 
 				var rByte = (byte)(r < 0 ? 0 : r > 255 ? 255 : r);
 				var gByte = (byte)(g < 0 ? 0 : g > 255 ? 255 : g);
@@ -227,88 +243,22 @@ public class JpegProcessor : IJpegProcessor
 				pixel[0] = bByte;
 			}
 		}
-		
-		bmp.UnlockBits(bmpData);
 	}
 
-	private static double[] GetSubMatrix(double[] channel, int yOffset, int yLength, int xOffset, int xLength, int stride)
+	private static void GetSubMatrix(double[] channel, int yOffset, int yLength, int xOffset,
+		int xLength, int stride, int channelHeight, Span<double> buffer)
 	{
-		var result = new double[yLength * xLength];
-		for (int j = 0; j < yLength; j++)
+		for (var j = 0; j < yLength; ++j)
 		{
-			var srcOffset = (yOffset + j) * stride + xOffset;
-			var dstOffset = j * xLength;
-			Array.Copy(channel, srcOffset, result, dstOffset, xLength);
+			var row = Math.Min(yOffset + j, channelHeight - 1);
+			var rowOffset = row * stride;
+			var bufferRowOffset = j * 8;
+			for (var i = 0; i < xLength; ++i)
+			{
+				var col = Math.Min(xOffset + i, stride - 1);
+				buffer[bufferRowOffset + i] = channel[rowOffset + col];
+			}
 		}
-		return result;
-	}
-
-	private static void ZigZagScan(byte[] channelFreqs, byte[] result, int i)
-	{
-	    result[i++] = channelFreqs[0];
-	    result[i++] = channelFreqs[1];
-	    result[i++] = channelFreqs[8];
-	    result[i++] = channelFreqs[16];
-	    result[i++] = channelFreqs[9];
-	    result[i++] = channelFreqs[2];
-	    result[i++] = channelFreqs[3];
-	    result[i++] = channelFreqs[10];
-	    result[i++] = channelFreqs[17];
-	    result[i++] = channelFreqs[24];
-	    result[i++] = channelFreqs[32];
-	    result[i++] = channelFreqs[25];
-	    result[i++] = channelFreqs[18];
-	    result[i++] = channelFreqs[11];
-	    result[i++] = channelFreqs[4];
-	    result[i++] = channelFreqs[5];
-	    result[i++] = channelFreqs[12];
-	    result[i++] = channelFreqs[19];
-	    result[i++] = channelFreqs[26];
-	    result[i++] = channelFreqs[33];
-	    result[i++] = channelFreqs[40];
-	    result[i++] = channelFreqs[48];
-	    result[i++] = channelFreqs[41];
-	    result[i++] = channelFreqs[34];
-	    result[i++] = channelFreqs[27];
-	    result[i++] = channelFreqs[20];
-	    result[i++] = channelFreqs[13];
-	    result[i++] = channelFreqs[6];
-	    result[i++] = channelFreqs[7];
-	    result[i++] = channelFreqs[14];
-	    result[i++] = channelFreqs[21];
-	    result[i++] = channelFreqs[28];
-	    result[i++] = channelFreqs[35];
-	    result[i++] = channelFreqs[42];
-	    result[i++] = channelFreqs[49];
-	    result[i++] = channelFreqs[56];
-	    result[i++] = channelFreqs[57];
-	    result[i++] = channelFreqs[50];
-	    result[i++] = channelFreqs[43];
-	    result[i++] = channelFreqs[36];
-	    result[i++] = channelFreqs[29];
-	    result[i++] = channelFreqs[22];
-	    result[i++] = channelFreqs[15];
-	    result[i++] = channelFreqs[23];
-	    result[i++] = channelFreqs[30];
-	    result[i++] = channelFreqs[37];
-	    result[i++] = channelFreqs[44];
-	    result[i++] = channelFreqs[51];
-	    result[i++] = channelFreqs[58];
-	    result[i++] = channelFreqs[59];
-	    result[i++] = channelFreqs[52];
-	    result[i++] = channelFreqs[45];
-	    result[i++] = channelFreqs[38];
-	    result[i++] = channelFreqs[31];
-	    result[i++] = channelFreqs[39];
-	    result[i++] = channelFreqs[46];
-	    result[i++] = channelFreqs[53];
-	    result[i++] = channelFreqs[60];
-	    result[i++] = channelFreqs[61];
-	    result[i++] = channelFreqs[54];
-	    result[i++] = channelFreqs[47];
-	    result[i++] = channelFreqs[55];
-	    result[i++] = channelFreqs[62];
-	    result[i++] = channelFreqs[63];
 	}
 
 	private static byte[] ZigZagUnScan(byte[] quantizedBytes)
@@ -381,25 +331,12 @@ public class JpegProcessor : IJpegProcessor
 		return result;
 	}
 
-	private static byte[] Quantize(double[] channelFreqs, int quality)
-	{
-		var result = new byte[64];
-		var quantizationMatrix = GetQuantizationMatrix(quality);
-		
-		for (int i = 0; i < 64; i++)
-			result[i] = (byte)(channelFreqs[i] / quantizationMatrix[i]);
-
-		return result;
-	}
-
 	private static double[] DeQuantize(byte[] quantizedBytes, int quality)
 	{
 		var result = new double[64];
 		var quantizationMatrix = GetQuantizationMatrix(quality);
-
 		for (int i = 0; i < 64; i++)
 			result[i] = (sbyte)quantizedBytes[i] * quantizationMatrix[i];
-
 		return result;
 	}
 
@@ -426,5 +363,46 @@ public class JpegProcessor : IJpegProcessor
 			result[i] = (multiplier * result[i] + 50) / 100;
 
 		return result;
+	}
+	
+	private static readonly int[] ZigZagMap = new int[] {
+		0, 1, 8, 16, 9, 2, 3, 10, 17, 24, 32, 25, 18, 11, 4, 5,
+		12, 19, 26, 33, 40, 48, 41, 34, 27, 20, 13, 6, 7, 14, 21, 28,
+		35, 42, 49, 56, 57, 50, 43, 36, 29, 22, 15, 23, 30, 37, 44, 51,
+		58, 59, 52, 45, 38, 31, 39, 46, 53, 60, 61, 54, 47, 55, 62, 63
+	};
+
+	private static unsafe void QuantizeAndZigZagInPlace(Span<double> dctBlock, int quality, byte[] output, int offset)
+	{
+		if (!QuantizeCache.TryGetValue(quality, out var qMatrix))
+		{
+			qMatrix = GetQuantizationMatrix(quality);
+			QuantizeCache[quality] = qMatrix;
+		}
+		fixed (double* pBlock = dctBlock)
+		fixed (int* pQ = qMatrix)
+		fixed (int* pZig = ZigZagMap)
+		{
+			for (int i = 0; i < 64; i++)
+			{
+				var zIndex = pZig[i];
+				output[offset + i] = (byte)(pBlock[zIndex] / pQ[zIndex]);
+			}
+		}
+	}
+	
+	private static void DequantizeAndZigZagInPlace(ReadOnlySpan<byte> quantized, int quality, double[] output)
+	{
+		if (!QuantizeCache.TryGetValue(quality, out var qMatrix))
+		{
+			qMatrix = GetQuantizationMatrix(quality);
+			QuantizeCache[quality] = qMatrix;
+		}
+
+		for (var i = 0; i < 64; ++i)
+		{
+			var targetIndex = ZigZagMap[i];
+			output[targetIndex] = (double)(sbyte)quantized[i] * qMatrix[targetIndex];
+		}
 	}
 }
