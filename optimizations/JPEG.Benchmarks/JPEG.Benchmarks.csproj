@@ -8,9 +8,19 @@
     </PropertyGroup>
 
     <ItemGroup>
-      <None Update="sample.bmp">
-        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      </None>
+        <None Update="marbles.bmp">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </None>
+        <None Update="marbles.bmp.compressed.70">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </None>
+        <None Update="earth.bmp">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </None>
+        <None Update="earth.bmp.compressed.70">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </None>
+
     </ItemGroup>
 
     <ItemGroup>
